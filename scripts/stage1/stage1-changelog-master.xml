@@ -53,6 +53,18 @@
     <property name="current_datetime" value="NOW()"/>
     <property name="uuid"             value="gen_random_uuid()"/>
 
+    <!-- Spring-injected changelog parameter, not a Liquibase one. Fineract feeds
+         it in via spring.liquibase.parameters.* (application.properties:519),
+         so it does not exist for a standalone CLI run and the raw
+         ${fineract.tenant.rounding-mode} text reaches Postgres as SQL.
+         Default 6 = HALF_EVEN, from application.properties:77
+         (FINERACT_CONFIG_ROUNDING_MODE:6). Used once, seeding c_configuration
+         row 23 in 0002_initial_data.xml.
+
+         The other 15 ${fineract.tenant.*} placeholders are all in tenant-store
+         changelogs, which this master deliberately does not include. -->
+    <property name="fineract.tenant.rounding-mode" value="6"/>
+
     <!-- Baseline: the frozen Flyway->Liquibase snapshot (parts 0001 + 0002). -->
     <include file="db/changelog/tenant/initial-switch-changelog-tenant.xml"/>
 
