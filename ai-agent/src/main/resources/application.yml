@@ -1,0 +1,59 @@
+spring:
+  application:
+    name: fineract-query-agent
+
+  datasource:
+    # Neon requires SSL. Supply the JDBC form, e.g.
+    #   jdbc:postgresql://ep-xxx.region.aws.neon.tech/fineract_agent?sslmode=require
+    url: ${AGENT_DB_JDBC_URL}
+    username: ${AGENT_DB_USER}
+    password: ${AGENT_DB_PASSWORD}
+    hikari:
+      # Neon suspends idle compute; a small pool with a short idle timeout keeps
+      # the free tier from being held awake by connections nobody is using.
+      maximum-pool-size: 5
+      minimum-idle: 0
+      idle-timeout: 30000
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    # V1 is a pg_dump of a real Liquibase run and V3/V4 are the seed, so an
+    # existing non-empty database means someone applied them by hand. Fail
+    # rather than baseline over it: two sources of truth for the schema is
+    # exactly the problem these migrations exist to remove.
+    baseline-on-migrate: false
+
+  ai:
+    google:
+      genai:
+        # Gemini Developer API key from https://aistudio.google.com/api-keys
+        # Do NOT set project-id or location: either one switches this client
+        # into Vertex AI mode, where the API key is rejected.
+        api-key: ${GEMINI_API_KEY}
+        chat:
+          # Note the prefix is spring.ai.google.genai.chat.* directly - there is
+          # no ".options" segment here, unlike most Spring AI providers. Getting
+          # it wrong does not fail: the property is ignored and the default
+          # model is used silently.
+          model: gemini-2.5-flash
+          # Deterministic by default. Stage 5 evals compare answers against
+          # expected values computed in SQL, and a non-zero temperature turns a
+          # pass rate into a sampling experiment.
+          temperature: 0.0
+
+server:
+  port: ${PORT:8080}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+
+logging:
+  level:
+    org.springframework.ai: INFO

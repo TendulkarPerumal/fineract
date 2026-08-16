@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!--
+        Standalone Maven project inside a Gradle-built fork of Apache Fineract.
+        Deliberate: this service is not part of Fineract, it only queries a
+        subset of Fineract's schema. Keeping it out of the Gradle build keeps
+        the boundary obvious and avoids inheriting Fineract's build config.
+
+        Spring Boot 4.1 rather than 3.x, because the Gemini free tier requires
+        Spring AI 2.0's google-genai starter (API-key auth against the Gemini
+        Developer API), and Spring AI 2.0 runs only on Boot 4.0/4.1. Spring AI
+        1.0's only Gemini option is the Vertex AI starter, which needs a GCP
+        project and service-account credentials - billed, not the free tier.
+    -->
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>4.1.0</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>dev.tendulkar</groupId>
+    <artifactId>fineract-query-agent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <name>fineract-query-agent</name>
+    <description>Natural-language query agent over Apache Fineract's core banking schema</description>
+
+    <properties>
+        <java.version>21</java.version>
+        <!--
+            Pinned to 2.0.0. Spring AI 2.0.0 starters resolve Spring Boot 4.1.0
+            dependencies even though 4.0.x is documented as supported
+            (spring-projects/spring-ai#6465), so the parent is held at 4.1.0 to
+            keep the dependency graph consistent.
+        -->
+        <spring-ai.version>2.0.0</spring-ai.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.springframework.ai</groupId>
+                <artifactId>spring-ai-bom</artifactId>
+                <version>${spring-ai.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+
+        <!--
+            JDBC rather than JPA. Every query this service runs is a read-only
+            reporting query against Fineract's schema, expressed as SQL that has
+            to match Fineract's own semantics exactly (arrears, rollups). An ORM
+            would add a mapping layer whose only job would be to get out of the
+            way, and would invite lazy-loading behaviour in a read-only service.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-jdbc</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+        <!-- Flyway 10+ ships database support as separate modules. -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+        </dependency>
+
+        <!--
+            Gemini via the Developer API (free tier). Setting project-id or
+            location in config switches this client into Vertex AI mode and the
+            API key is then rejected, so application.yml sets only api-key.
+        -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-model-google-genai</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>
