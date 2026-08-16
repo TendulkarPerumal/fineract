@@ -25,8 +25,8 @@
        Changeset-level contexts (mysql vs postgresql) are unaffected and still
        work, which is what actually selects the dialect.
 
-    Run with --contexts=postgresql (see dump-fineract-schema.sh). Omitting that
-    context silently skips 135 postgres changesets and still exits 0.
+    Run with the "postgresql" context (see dump-fineract-schema.sh). Omitting
+    that context silently skips 135 postgres changesets and still exits 0.
 -->
 <databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
