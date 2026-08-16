@@ -97,15 +97,47 @@ echo ">> liquibase update (contexts=postgresql,initial_switch)"
   update
 
 # --- dump -------------------------------------------------------------------
-command -v pg_dump >/dev/null 2>&1 || {
-  echo "ERROR: pg_dump not found. Install with:" >&2
-  echo "  sudo apt-get update && sudo apt-get install -y postgresql-client" >&2
+# pg_dump refuses to dump a server newer than itself. Neon tracks current
+# Postgres (18 at time of writing) while Ubuntu 24.04 ships client 16, so the
+# distro's postgresql-client is not sufficient. Pick the newest pg_dump on the
+# box rather than whatever is first on PATH.
+major_of() { "$1" --version 2>/dev/null | grep -oE '[0-9]+' | head -1; }
+
+PG_DUMP=""
+PG_DUMP_MAJOR=0
+for cand in /usr/lib/postgresql/*/bin/pg_dump "$(command -v pg_dump 2>/dev/null || true)"; do
+  [[ -x "$cand" ]] || continue
+  v="$(major_of "$cand")"
+  [[ -n "$v" ]] || continue
+  if (( v > PG_DUMP_MAJOR )); then PG_DUMP_MAJOR="$v"; PG_DUMP="$cand"; fi
+done
+
+SERVER_MAJOR="$(psql "$SCRATCH_DB_URL" -tAc 'SHOW server_version' 2>/dev/null \
+                | grep -oE '^[0-9]+' || true)"
+
+if [[ -z "$PG_DUMP" ]] || { [[ -n "$SERVER_MAJOR" ]] && (( PG_DUMP_MAJOR < SERVER_MAJOR )); }; then
+  echo "ERROR: need pg_dump >= ${SERVER_MAJOR:-server version}; found ${PG_DUMP_MAJOR:-none}." >&2
+  cat >&2 <<'INSTALL'
+
+Install the matching client from the PostgreSQL APT repository:
+
+  sudo install -d /usr/share/postgresql-common/pgdg
+  sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+    https://www.postgresql.org/media/keys/ACCC4CF8.asc
+  echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
+https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+    | sudo tee /etc/apt/sources.list.d/pgdg.list
+  sudo apt-get update && sudo apt-get install -y postgresql-client-18
+
+Then re-run this script. Liquibase will report no changes and skip straight
+to the dump.
+INSTALL
   exit 1
-}
+fi
 
 DUMP="$OUT_DIR/fineract-schema-full.sql"
-echo ">> pg_dump --schema-only -> $DUMP"
-pg_dump --schema-only --no-owner --no-privileges --no-comments \
+echo ">> pg_dump ($PG_DUMP, major $PG_DUMP_MAJOR) --schema-only -> $DUMP"
+"$PG_DUMP" --schema-only --no-owner --no-privileges --no-comments \
         --dbname="$SCRATCH_DB_URL" > "$DUMP"
 
 # --- sanity checks ----------------------------------------------------------
