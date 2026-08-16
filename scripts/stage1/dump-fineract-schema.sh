@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+#
+# Stage 1, step 1: produce a real Fineract tenant schema by running Fineract's
+# own Liquibase changelogs against a throwaway Postgres, then dumping the result.
+#
+# This exists because reading 0001_initial_schema.xml is not enough: that file is
+# a frozen Flyway->Liquibase baseline with 290 migrations layered on top. See
+# docs/DOMAIN.md section 1.2.
+#
+# Usage:
+#   export SCRATCH_DB_URL='postgresql://user:pass@host/dbname?sslmode=require'
+#   ./scripts/stage1/dump-fineract-schema.sh
+#
+# Output: build/stage1/fineract-schema-full.sql
+#
+set -euo pipefail
+
+LIQUIBASE_VERSION="${LIQUIBASE_VERSION:-4.31.1}"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+OUT_DIR="$REPO_ROOT/build/stage1"
+TOOL_DIR="$REPO_ROOT/build/stage1/tools"
+
+if [[ -z "${SCRATCH_DB_URL:-}" ]]; then
+  echo "ERROR: SCRATCH_DB_URL is not set." >&2
+  echo "Expected: postgresql://user:pass@host/dbname?sslmode=require" >&2
+  exit 1
+fi
+
+# --- derive JDBC url + credentials from the libpq url -----------------------
+# Note: assumes the password contains no '@'. Neon's generated passwords do not.
+_rest="${SCRATCH_DB_URL#*://}"
+_creds="${_rest%%@*}"
+_hostpart="${_rest#*@}"
+DB_USER="${_creds%%:*}"
+DB_PASS="${_creds#*:}"
+JDBC_URL="jdbc:postgresql://${_hostpart}"
+
+mkdir -p "$OUT_DIR" "$TOOL_DIR"
+
+# --- fetch the Liquibase CLI (ships with the Postgres JDBC driver) ----------
+LB="$TOOL_DIR/liquibase-$LIQUIBASE_VERSION/liquibase"
+if [[ ! -x "$LB" ]]; then
+  echo ">> downloading Liquibase $LIQUIBASE_VERSION"
+  mkdir -p "$TOOL_DIR/liquibase-$LIQUIBASE_VERSION"
+  curl -fsSL \
+    "https://github.com/liquibase/liquibase/releases/download/v${LIQUIBASE_VERSION}/liquibase-${LIQUIBASE_VERSION}.tar.gz" \
+    | tar -xz -C "$TOOL_DIR/liquibase-$LIQUIBASE_VERSION"
+  chmod +x "$LB"
+fi
+
+# --- classpath: every module whose changelogs the master pulls in -----------
+# db.changelog-master.xml includes module changelogs by *classpath* path, not by
+# relative path, so each owning module's resources dir must be on the classpath.
+CP=""
+for m in provider loan investor savings progressive-loan command-jdbc \
+         working-capital-loan loan-origination; do
+  d="$REPO_ROOT/fineract-$m/src/main/resources"
+  [[ -d "$d" ]] || { echo "ERROR: missing $d" >&2; exit 1; }
+  CP="${CP:+$CP:}$d"
+done
+
+CHANGELOG="db/changelog/db.changelog-master.xml"
+
+# --- contexts ---------------------------------------------------------------
+# Three things are being selected here, and getting any of them wrong produces a
+# schema that looks fine and is not:
+#
+#   tenant_db     - the tenant schema (as opposed to tenant_store_db, the
+#                   multi-tenancy registry, which we do not want)
+#   postgresql    - THE IMPORTANT ONE. 135 changesets are gated on
+#                   context="postgresql" and their MySQL twins on
+#                   context="mysql". Fineract injects this at runtime from the
+#                   JDBC connection (DatabaseAwareMigrationContextProvider:30).
+#                   A CLI run that omits it skips all of them and still exits 0.
+#   initial_switch - gates parts 0001+0002, the frozen baseline. Every other
+#                   changelog is gated on !initial_switch, so a single run
+#                   cannot apply both halves. Hence two passes, mirroring
+#                   TenantDatabaseUpgradeService.upgradeIndividualTenant:196-204.
+run_liquibase() {
+  local contexts="$1" label="$2"
+  echo ">> liquibase update [$label] contexts=$contexts"
+  "$LB" \
+    --classpath="$CP" \
+    --changelog-file="$CHANGELOG" \
+    --url="$JDBC_URL" \
+    --username="$DB_USER" \
+    --password="$DB_PASS" \
+    --contexts="$contexts" \
+    update
+}
+
+run_liquibase "tenant_db,initial_switch,postgresql" "pass 1: baseline 0001+0002"
+run_liquibase "tenant_db,postgresql"                "pass 2: 290 migrations"
+
+# --- dump -------------------------------------------------------------------
+command -v pg_dump >/dev/null 2>&1 || {
+  echo "ERROR: pg_dump not found. Install with:" >&2
+  echo "  sudo apt-get update && sudo apt-get install -y postgresql-client" >&2
+  exit 1
+}
+
+DUMP="$OUT_DIR/fineract-schema-full.sql"
+echo ">> pg_dump --schema-only -> $DUMP"
+pg_dump --schema-only --no-owner --no-privileges --no-comments \
+        --dbname="$SCRATCH_DB_URL" > "$DUMP"
+
+# --- sanity checks ----------------------------------------------------------
+# A Liquibase run that skipped the postgresql context still exits 0, so verify
+# the result rather than trusting the exit code.
+echo ""
+echo "=== verification ==="
+tables=$(grep -c '^CREATE TABLE' "$DUMP" || true)
+echo "tables created: $tables"
+
+missing=0
+for t in m_office m_staff m_currency m_client m_product_loan m_loan \
+         m_loan_repayment_schedule m_loan_transaction \
+         m_loan_transaction_repayment_schedule_mapping m_loan_arrears_aging \
+         m_loan_charge m_delinquency_range m_delinquency_bucket \
+         m_delinquency_bucket_mappings m_loan_delinquency_tag_history \
+         m_savings_product m_savings_account m_savings_account_transaction; do
+  if grep -q "CREATE TABLE public.$t " "$DUMP"; then
+    echo "  ok      $t"
+  else
+    echo "  MISSING $t"
+    missing=$((missing + 1))
+  fi
+done
+
+if [[ "$missing" -gt 0 ]]; then
+  echo ""
+  echo "FAILED: $missing in-scope table(s) missing." >&2
+  echo "The usual cause is a dropped 'postgresql' context." >&2
+  exit 1
+fi
+
+# The delinquency tables only exist in the postgresql-context branch of
+# changelog 0029, so their presence is the sharpest proof the context applied.
+echo ""
+echo "OK: all 18 in-scope tables present in $DUMP"
