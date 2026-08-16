@@ -79,9 +79,17 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!--
+            MUST be the starter, not bare flyway-core. Spring Boot 4 split
+            auto-configuration into per-integration modules, and flyway-core on
+            its own no longer activates it. The failure is silent: the app
+            starts, spring.flyway.* properties are ignored, no migration runs
+            and nothing is logged. Verified here - the first run created no
+            flyway_schema_history at all.
+        -->
         <dependency>
-            <groupId>org.flywaydb</groupId>
-            <artifactId>flyway-core</artifactId>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-flyway</artifactId>
         </dependency>
         <!-- Flyway 10+ ships database support as separate modules. -->
         <dependency>

@@ -17,6 +17,14 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MIGRATIONS="$REPO_ROOT/ai-agent/src/main/resources/db/migration"
 DB_NAME="${DB_NAME:-fineract_agent}"
 
+# --create-only drops and recreates the database and stops, leaving it empty for
+# the application's Flyway to migrate. Use this once the app owns migrations:
+# applying them here as well leaves a schema with no flyway_schema_history,
+# which Flyway then refuses to start against (baseline-on-migrate is off, by
+# design - two sources of truth for the schema is the problem, not the fix).
+CREATE_ONLY=false
+[[ "${1:-}" == "--create-only" ]] && CREATE_ONLY=true
+
 [[ -n "${SCRATCH_DB_URL:-}" ]] || { echo "ERROR: SCRATCH_DB_URL is not set" >&2; exit 1; }
 
 # CREATE/DROP DATABASE cannot run through Neon's pooled endpoint, which runs
@@ -28,6 +36,11 @@ echo ">> target: $(echo "$AGENT_URL" | sed 's|://[^@]*@|://***@|' | sed 's|?.*||
 echo ">> dropping and recreating $DB_NAME"
 psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -q -c "DROP DATABASE IF EXISTS $DB_NAME WITH (FORCE)"
 psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -q -c "CREATE DATABASE $DB_NAME"
+
+if [[ "$CREATE_ONLY" == true ]]; then
+    echo ">> --create-only: database is empty; start the app and let Flyway migrate it"
+    exit 0
+fi
 
 for f in "$MIGRATIONS"/V*.sql; do
     echo ">> applying $(basename "$f")"
