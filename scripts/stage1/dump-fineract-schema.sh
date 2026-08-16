@@ -68,24 +68,32 @@ CHANGELOG="stage1-changelog-master.xml"
 # --- contexts ---------------------------------------------------------------
 # Only ONE context matters now, and it is the one that fails silently:
 #
-#   postgresql - 135 changesets are gated on context="postgresql" and their
-#                MySQL twins on context="mysql". This is a Liquibase *context*,
-#                not a dbms= attribute, and Fineract injects it at runtime from
-#                the JDBC connection (DatabaseAwareMigrationContextProvider:30).
-#                A CLI run that omits it skips all 135 and still exits 0.
+#   postgresql     - 135 changesets are gated on context="postgresql" and their
+#                    MySQL twins on context="mysql". This is a Liquibase
+#                    *context*, not a dbms= attribute, and Fineract injects it at
+#                    runtime from the JDBC connection
+#                    (DatabaseAwareMigrationContextProvider:30). Omitting it
+#                    skips all 135 and still exits 0.
 #
-# Ordering (baseline first, then the 290 migrations, then the deferred parts) is
-# handled structurally by include order in stage1-changelog-master.xml rather
-# than by initial_switch contexts, because Liquibase 4.16+ ignores the `context`
-# attribute on <include> - it was renamed to contextFilter.
-echo ">> liquibase update (contexts=postgresql)"
+#   initial_switch - required, and the reason is counter-intuitive. Parts 0001
+#                    and 0002 (980 + 43 changesets, the entire baseline schema)
+#                    carry no context of their own; they are gated by the
+#                    context="initial_switch" on the <include> elements in
+#                    initial-switch-changelog-tenant.xml:25-26. Without it,
+#                    Liquibase reports "Context mismatch: 1140", creates no
+#                    tables, and then dies on the first INSERT in part 0003.
+#
+# Nothing in our changelog tree is gated on !initial_switch, so both contexts can
+# be passed in a single pass; ordering comes from include order in
+# stage1-changelog-master.xml.
+echo ">> liquibase update (contexts=postgresql,initial_switch)"
 "$LB" \
   --classpath="$CP" \
   --changelog-file="$CHANGELOG" \
   --url="$JDBC_URL" \
   --username="$DB_USER" \
   --password="$DB_PASS" \
-  --contexts="postgresql" \
+  --contexts="postgresql,initial_switch" \
   update
 
 # --- dump -------------------------------------------------------------------

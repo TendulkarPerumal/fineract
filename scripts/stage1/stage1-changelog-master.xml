@@ -7,26 +7,38 @@
 
     1. That master gates the tenant-store changelogs with
          context="tenant_store_db AND initial_switch"
-       on the <include> element. Liquibase 4.16+ renamed that attribute to
-       contextFilter, so a modern CLI IGNORES it and runs the tenant-store
-       changelogs regardless of the contexts passed. Those changelogs contain
-       <customChange> elements pointing at Fineract Java classes
-       (TenantPasswordEncryptionTask, TenantReadOnlyPasswordEncryptionTask,
-       in tenant-store/parts/0007_encrypt_existing_tenant_passwords.xml:32),
-       which are not on a standalone CLI's classpath. The run dies there.
+       on the <include> element. Boolean expressions like that are only
+       evaluated as expressions by the newer contextFilter attribute; the legacy
+       context attribute does not treat the value as a conjunction. Observed
+       behaviour: passing initial_switch (which we must - see below) is enough
+       to match that include, pulling in the tenant-store changelogs even though
+       tenant_store_db was never passed.
 
-       We do not want the tenant-store schema at all - it is the multi-tenancy
+       Those changelogs contain <customChange> elements pointing at Fineract
+       Java classes (TenantPasswordEncryptionTask,
+       TenantReadOnlyPasswordEncryptionTask, in
+       tenant-store/parts/0007_encrypt_existing_tenant_passwords.xml:32) which
+       are not on a standalone CLI's classpath, so the run dies there.
+
+       We never wanted the tenant-store schema anyway - it is the multi-tenancy
        registry, not the banking domain - so we exclude it structurally by
-       listing includes ourselves. Structure is enforceable; that attribute is not.
+       listing the includes ourselves. Structure is enforceable; relying on that
+       attribute to mean what it looks like it means is not.
 
-    2. For the same reason, the initial_switch / !initial_switch split on the
-       tenant includes is also ignored. Rather than fight it with two passes,
-       we rely on include ORDER here: 0001+0002 first, then everything else.
-       Changeset-level contexts (mysql vs postgresql) are unaffected and still
-       work, which is what actually selects the dialect.
+    2. Include ORDER here is what sequences the run: baseline (0001+0002) first,
+       then the 245 migrations, then the modules, then the deferred parts.
 
-    Run with the "postgresql" context (see dump-fineract-schema.sh). Omitting
-    that context silently skips 135 postgres changesets and still exits 0.
+    Run with contexts "postgresql,initial_switch" (see dump-fineract-schema.sh):
+
+      postgresql     - selects the Postgres half of the 135 dialect-split
+                       changesets. Omitting it skips them and still exits 0.
+      initial_switch - parts 0001 and 0002 carry no context themselves; they are
+                       gated by context="initial_switch" on the includes in
+                       initial-switch-changelog-tenant.xml:25-26. Omitting it
+                       filters out 1023 baseline changesets, creates no tables,
+                       and dies on the first INSERT in part 0003.
+
+    Nothing in this tree is gated on !initial_switch, so one pass covers both.
 -->
 <databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
