@@ -86,6 +86,27 @@ CHANGELOG="stage1-changelog-master.xml"
 # Nothing in our changelog tree is gated on !initial_switch, so both contexts can
 # be passed in a single pass; ordering comes from include order in
 # stage1-changelog-master.xml.
+# --- preflight --------------------------------------------------------------
+# Liquibase creates its DATABASECHANGELOG table in the connection's default
+# schema. If search_path resolves to nothing that exists, it fails with
+# "no schema has been selected to create in" before running a single changeset.
+# Report what we are actually connected to, then guarantee a schema exists.
+if command -v psql >/dev/null 2>&1; then
+  echo ">> preflight"
+  psql "$SCRATCH_DB_URL" -v ON_ERROR_STOP=1 -tAc \
+    "SELECT 'database=' || current_database()
+          || ' user='   || current_user
+          || ' search_path=' || current_setting('search_path')
+          || ' public_exists=' || EXISTS (
+                 SELECT 1 FROM information_schema.schemata
+                 WHERE schema_name = 'public')" \
+    || { echo "ERROR: cannot connect with SCRATCH_DB_URL" >&2; exit 1; }
+
+  psql "$SCRATCH_DB_URL" -v ON_ERROR_STOP=1 -q -c \
+    'CREATE SCHEMA IF NOT EXISTS public' \
+    || { echo "ERROR: could not ensure schema 'public' exists" >&2; exit 1; }
+fi
+
 echo ">> liquibase update (contexts=postgresql,initial_switch)"
 "$LB" \
   --classpath="$CP" \
@@ -94,6 +115,8 @@ echo ">> liquibase update (contexts=postgresql,initial_switch)"
   --username="$DB_USER" \
   --password="$DB_PASS" \
   --contexts="postgresql,initial_switch" \
+  --default-schema-name=public \
+  --liquibase-schema-name=public \
   update
 
 # --- dump -------------------------------------------------------------------
