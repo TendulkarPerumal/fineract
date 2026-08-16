@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Stage 1 master changelog: Fineract's TENANT schema only.
+
+    This deliberately replaces fineract-provider's db/changelog/db.changelog-master.xml
+    rather than reusing it. Two reasons, both discovered the hard way:
+
+    1. That master gates the tenant-store changelogs with
+         context="tenant_store_db AND initial_switch"
+       on the <include> element. Liquibase 4.16+ renamed that attribute to
+       contextFilter, so a modern CLI IGNORES it and runs the tenant-store
+       changelogs regardless of the contexts passed. Those changelogs contain
+       <customChange> elements pointing at Fineract Java classes
+       (TenantPasswordEncryptionTask, TenantReadOnlyPasswordEncryptionTask,
+       in tenant-store/parts/0007_encrypt_existing_tenant_passwords.xml:32),
+       which are not on a standalone CLI's classpath. The run dies there.
+
+       We do not want the tenant-store schema at all - it is the multi-tenancy
+       registry, not the banking domain - so we exclude it structurally by
+       listing includes ourselves. Structure is enforceable; that attribute is not.
+
+    2. For the same reason, the initial_switch / !initial_switch split on the
+       tenant includes is also ignored. Rather than fight it with two passes,
+       we rely on include ORDER here: 0001+0002 first, then everything else.
+       Changeset-level contexts (mysql vs postgresql) are unaffected and still
+       work, which is what actually selects the dialect.
+
+    Run with --contexts=postgresql (see dump-fineract-schema.sh). Omitting that
+    context silently skips 135 postgres changesets and still exits 0.
+-->
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.1.xsd">
+
+    <!-- Postgres values for the properties the tenant changelogs interpolate.
+         Upstream defines these in db.changelog-master.xml with context="postgresql".
+         gen_random_uuid() is used instead of upstream's uuid_generate_v4() because
+         the latter needs the uuid-ossp extension; gen_random_uuid() is built in
+         from PG13. Single use: 0061_add_idempotency_key_to_command_source.xml:36. -->
+    <property name="current_date"     value="CURRENT_DATE"/>
+    <property name="current_datetime" value="NOW()"/>
+    <property name="uuid"             value="gen_random_uuid()"/>
+
+    <!-- Baseline: the frozen Flyway->Liquibase snapshot (parts 0001 + 0002). -->
+    <include file="db/changelog/tenant/initial-switch-changelog-tenant.xml"/>
+
+    <!-- The 245 migrations layered on top. -->
+    <include file="db/changelog/tenant/changelog-tenant.xml"/>
+
+    <!-- Module changelogs, in upstream's order (it matters: the comment in
+         db.changelog-master.xml notes new modules go last to preserve existing
+         auto-increment identifiers). -->
+    <include file="db/changelog/tenant/module/loan/module-changelog-master.xml"/>
+    <include file="db/changelog/tenant/module/investor/module-changelog-master.xml"/>
+    <include file="db/changelog/tenant/module/savings/parts/module-changelog-master.xml"/>
+    <include file="db/changelog/tenant/module/progressiveloan/module-changelog-master.xml"/>
+    <include file="db/changelog/tenant/module/command/module-changelog-master.xml"/>
+    <include file="db/changelog/tenant/module/workingcapitalloan/module-changelog-master.xml"/>
+    <include file="db/changelog/tenant/module/loanorigination/module-changelog-master.xml"/>
+
+    <!-- Deferred by upstream to run after the modules: parts 0146 + 0241. -->
+    <include file="db/changelog/tenant/final-changelog-tenant.xml"/>
+
+</databaseChangeLog>

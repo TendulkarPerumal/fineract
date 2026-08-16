@@ -51,7 +51,7 @@ fi
 # --- classpath: every module whose changelogs the master pulls in -----------
 # db.changelog-master.xml includes module changelogs by *classpath* path, not by
 # relative path, so each owning module's resources dir must be on the classpath.
-CP=""
+CP="$REPO_ROOT/scripts/stage1"
 for m in provider loan investor savings progressive-loan command-jdbc \
          working-capital-loan loan-origination; do
   d="$REPO_ROOT/fineract-$m/src/main/resources"
@@ -59,38 +59,34 @@ for m in provider loan investor savings progressive-loan command-jdbc \
   CP="${CP:+$CP:}$d"
 done
 
-CHANGELOG="db/changelog/db.changelog-master.xml"
+# Our own master, NOT fineract-provider's db.changelog-master.xml. See the
+# header comment in stage1-changelog-master.xml for why: upstream's master
+# pulls in the tenant-store changelogs, whose <customChange> elements reference
+# Fineract Java classes a standalone CLI cannot load.
+CHANGELOG="stage1-changelog-master.xml"
 
 # --- contexts ---------------------------------------------------------------
-# Three things are being selected here, and getting any of them wrong produces a
-# schema that looks fine and is not:
+# Only ONE context matters now, and it is the one that fails silently:
 #
-#   tenant_db     - the tenant schema (as opposed to tenant_store_db, the
-#                   multi-tenancy registry, which we do not want)
-#   postgresql    - THE IMPORTANT ONE. 135 changesets are gated on
-#                   context="postgresql" and their MySQL twins on
-#                   context="mysql". Fineract injects this at runtime from the
-#                   JDBC connection (DatabaseAwareMigrationContextProvider:30).
-#                   A CLI run that omits it skips all of them and still exits 0.
-#   initial_switch - gates parts 0001+0002, the frozen baseline. Every other
-#                   changelog is gated on !initial_switch, so a single run
-#                   cannot apply both halves. Hence two passes, mirroring
-#                   TenantDatabaseUpgradeService.upgradeIndividualTenant:196-204.
-run_liquibase() {
-  local contexts="$1" label="$2"
-  echo ">> liquibase update [$label] contexts=$contexts"
-  "$LB" \
-    --classpath="$CP" \
-    --changelog-file="$CHANGELOG" \
-    --url="$JDBC_URL" \
-    --username="$DB_USER" \
-    --password="$DB_PASS" \
-    --contexts="$contexts" \
-    update
-}
-
-run_liquibase "tenant_db,initial_switch,postgresql" "pass 1: baseline 0001+0002"
-run_liquibase "tenant_db,postgresql"                "pass 2: 290 migrations"
+#   postgresql - 135 changesets are gated on context="postgresql" and their
+#                MySQL twins on context="mysql". This is a Liquibase *context*,
+#                not a dbms= attribute, and Fineract injects it at runtime from
+#                the JDBC connection (DatabaseAwareMigrationContextProvider:30).
+#                A CLI run that omits it skips all 135 and still exits 0.
+#
+# Ordering (baseline first, then the 290 migrations, then the deferred parts) is
+# handled structurally by include order in stage1-changelog-master.xml rather
+# than by initial_switch contexts, because Liquibase 4.16+ ignores the `context`
+# attribute on <include> - it was renamed to contextFilter.
+echo ">> liquibase update (contexts=postgresql)"
+"$LB" \
+  --classpath="$CP" \
+  --changelog-file="$CHANGELOG" \
+  --url="$JDBC_URL" \
+  --username="$DB_USER" \
+  --password="$DB_PASS" \
+  --contexts="postgresql" \
+  update
 
 # --- dump -------------------------------------------------------------------
 command -v pg_dump >/dev/null 2>&1 || {
