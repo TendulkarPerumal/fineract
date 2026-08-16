@@ -36,7 +36,15 @@ spring:
           # no ".options" segment here, unlike most Spring AI providers. Getting
           # it wrong does not fail: the property is ignored and the default
           # model is used silently.
-          model: gemini-2.5-flash
+          # gemini-2.5-flash is retired: new API keys get
+          #   404 "This model is no longer available to new users"
+          # (full deprecation 2026-10-16). The free tier now serves
+          # gemini-3.6-flash, gemini-3.5-flash and gemini-3.5-flash-lite.
+          # 3.5-flash is chosen because it is both on the free tier and in
+          # Spring AI 2.0's documented model list. To see what a given key can
+          # actually reach:
+          #   curl -s "https://generativelanguage.googleapis.com/v1beta/models?key=$GEMINI_API_KEY"
+          model: ${GEMINI_MODEL:gemini-3.5-flash}
           # Deterministic by default. Stage 5 evals compare answers against
           # expected values computed in SQL, and a non-zero temperature turns a
           # pass rate into a sampling experiment.
