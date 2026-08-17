@@ -63,6 +63,16 @@
         </dependency>
 
         <!--
+            Server-rendered UI. No JS build step, no CDN, no separate frontend
+            deploy: one jar serves the page and the API, which is what makes the
+            Cloud Run deployment a single container.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-thymeleaf</artifactId>
+        </dependency>
+
+        <!--
             JDBC rather than JPA. Every query this service runs is a read-only
             reporting query against Fineract's schema, expressed as SQL that has
             to match Fineract's own semantics exactly (arrears, rollups). An ORM

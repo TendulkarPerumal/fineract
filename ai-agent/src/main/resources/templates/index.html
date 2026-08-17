@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Fineract Query Agent</title>
+    <!--
+        Styles are inline and there are no external requests: no CDN, no fonts,
+        no analytics. One container serves everything, which keeps the Cloud Run
+        deployment self-contained and the page usable with no network beyond it.
+    -->
+    <style>
+        :root {
+            --bg: #fbfaf8; --panel: #ffffff; --ink: #1c1b19; --muted: #6b6862;
+            --line: #e5e1da; --accent: #7a4522; --accent-ink: #ffffff;
+            --warn-bg: #fdf3f0; --warn-ink: #8a2d12;
+        }
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg: #191817; --panel: #232120; --ink: #ecebe8; --muted: #a5a099;
+                --line: #37342f; --accent: #d97742; --accent-ink: #1a1817;
+                --warn-bg: #2e1d18; --warn-ink: #f0a58a;
+            }
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0; padding: 2rem 1rem; background: var(--bg); color: var(--ink);
+            font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        }
+        main { max-width: 46rem; margin: 0 auto; }
+        h1 { font-size: 1.4rem; margin: 0 0 .25rem; letter-spacing: -.01em; }
+        .sub { color: var(--muted); font-size: .9rem; margin: 0 0 1.5rem; }
+        form { display: flex; gap: .5rem; margin-bottom: 1rem; }
+        input[type=text] {
+            flex: 1; padding: .7rem .8rem; font-size: 1rem; color: var(--ink);
+            background: var(--panel); border: 1px solid var(--line); border-radius: .4rem;
+        }
+        input[type=text]:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+        button {
+            padding: .7rem 1.1rem; font-size: 1rem; font-weight: 600; cursor: pointer;
+            background: var(--accent); color: var(--accent-ink);
+            border: none; border-radius: .4rem;
+        }
+        button:disabled { opacity: .6; cursor: progress; }
+        .examples { margin: 0 0 1.75rem; padding: 0; list-style: none;
+                    display: flex; flex-wrap: wrap; gap: .4rem; }
+        .examples button {
+            background: transparent; color: var(--muted); font-weight: 400;
+            font-size: .82rem; padding: .3rem .6rem; border: 1px solid var(--line);
+            border-radius: 1rem;
+        }
+        .examples button:hover { color: var(--ink); border-color: var(--accent); }
+        .panel {
+            background: var(--panel); border: 1px solid var(--line);
+            border-radius: .5rem; padding: 1.1rem 1.25rem; margin-bottom: 1rem;
+        }
+        .panel h2 { font-size: .75rem; text-transform: uppercase; letter-spacing: .06em;
+                    color: var(--muted); margin: 0 0 .6rem; }
+        .answer { white-space: pre-wrap; }
+        .error { background: var(--warn-bg); color: var(--warn-ink); border-color: transparent; }
+        .meta { color: var(--muted); font-size: .8rem; }
+        footer { color: var(--muted); font-size: .78rem; margin-top: 2rem;
+                 border-top: 1px solid var(--line); padding-top: 1rem; }
+        code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85em; }
+    </style>
+</head>
+<body>
+<main>
+    <h1>Fineract Query Agent</h1>
+    <p class="sub">
+        Ask about clients, loans, arrears and savings in an Apache Fineract core
+        banking schema. Every figure is retrieved by SQL, never generated.
+        Business date: <code th:text="${businessDate}">2026-06-30</code>.
+    </p>
+
+    <form method="post" action="/ask" onsubmit="this.querySelector('button').disabled=true;
+              this.querySelector('button').textContent='Thinking…';">
+        <input type="text" id="question" name="question" maxlength="1000"
+               placeholder="How many loans are more than 60 days in arrears?"
+               th:value="${question}" autofocus required>
+        <button type="submit">Ask</button>
+    </form>
+
+    <ul class="examples">
+        <li th:each="ex : ${examples}">
+            <button type="button" th:text="${ex}"
+                    th:attr="data-q=${ex}" onclick="fill(this)">example</button>
+        </li>
+    </ul>
+
+    <div class="panel error" th:if="${error}">
+        <h2>Error</h2>
+        <div th:text="${error}">error</div>
+    </div>
+
+    <div class="panel" th:if="${answer}">
+        <h2>Answer</h2>
+        <div class="answer" th:text="${answer}">answer</div>
+    </div>
+
+    <p class="meta" th:if="${latencyMs}">
+        Answered in <span th:text="${latencyMs}">0</span> ms.
+    </p>
+
+    <footer>
+        Reads a subset of the Apache Fineract schema. The model chooses among
+        fixed, parameterised queries — it cannot write SQL. Arrears is computed
+        from the repayment schedule, matching Fineract's own definition;
+        no loan status means &ldquo;overdue&rdquo;.
+    </footer>
+</main>
+<script>
+    function fill(el) {
+        document.getElementById('question').value = el.getAttribute('data-q');
+        document.getElementById('question').focus();
+    }
+</script>
+</body>
+</html>
