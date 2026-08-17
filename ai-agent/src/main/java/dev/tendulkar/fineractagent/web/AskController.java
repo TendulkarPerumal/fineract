@@ -1,6 +1,7 @@
 package dev.tendulkar.fineractagent.web;
 
 import dev.tendulkar.fineractagent.agent.QueryAgent;
+import dev.tendulkar.fineractagent.observability.CallMetrics;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
@@ -12,6 +13,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -21,12 +23,14 @@ public class AskController {
     private final QueryAgent agent;
     private final JdbcClient jdbc;
     private final String model;
+    private final CallMetrics metrics;
 
-    AskController(QueryAgent agent, JdbcClient jdbc,
+    AskController(QueryAgent agent, JdbcClient jdbc, CallMetrics metrics,
                   @Value("${spring.ai.google.genai.chat.model:unknown}") String model) {
         this.agent = agent;
         this.jdbc = jdbc;
         this.model = model;
+        this.metrics = metrics;
     }
 
     /**
@@ -37,10 +41,13 @@ public class AskController {
      */
     @PostMapping("/ask")
     public AskResponse ask(@Valid @RequestBody AskRequest request) {
+        metrics.begin();
         long startedAt = System.nanoTime();
         String answer = agent.answer(request.question());
         long elapsedMs = (System.nanoTime() - startedAt) / 1_000_000;
-        return new AskResponse(answer, model, elapsedMs);
+        CallMetrics.Snapshot snapshot = metrics.end(elapsedMs);
+        return new AskResponse(answer, model, elapsedMs, snapshot.dbMillis(),
+                snapshot.modelMillis(), snapshot.toolCallCount(), snapshot.toolCalls());
     }
 
     /**
@@ -70,6 +77,7 @@ public class AskController {
             String question) {
     }
 
-    public record AskResponse(String answer, String model, long latencyMs) {
+    public record AskResponse(String answer, String model, long latencyMs, long dbMs,
+                              long modelMs, int toolCalls, List<CallMetrics.ToolCall> tools) {
     }
 }

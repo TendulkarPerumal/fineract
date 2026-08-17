@@ -49,6 +49,16 @@ spring:
           # expected values computed in SQL, and a non-zero temperature turns a
           # pass rate into a sampling experiment.
           temperature: 0.0
+          # Gemini 3.x models reason before answering, and that reasoning is
+          # billed and waited on. This workload does not need it: the hard
+          # thinking is already encoded in the tools, and the model's job is to
+          # pick one and report what came back. The first working answer took
+          # 187 seconds, most of it here.
+          thinking-level: ${GEMINI_THINKING_LEVEL:LOW}
+          # Caps the tail of a long answer. The 187-second response enumerated
+          # account numbers nobody asked for; output tokens are generated
+          # serially, so answer length is latency.
+          max-output-tokens: ${GEMINI_MAX_OUTPUT_TOKENS:800}
 
 agent:
   # Fineract's logical "today". Arrears is measured against this, and the seed
@@ -58,7 +68,10 @@ agent:
   # Hard cap on rows any tool may return, whatever the model asks for. One
   # careless call over 350 loans would otherwise dominate the context window
   # and the cost of a single question.
-  max-rows: ${AGENT_MAX_ROWS:50}
+  # Lowered from 50. Every returned row is prompt tokens on the next model call,
+  # paid for in both money and latency. Aggregate questions should use the
+  # totals tools; 20 rows is enough to name examples without shipping the book.
+  max-rows: ${AGENT_MAX_ROWS:20}
 
 server:
   port: ${PORT:8080}

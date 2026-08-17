@@ -68,6 +68,67 @@ public class PortfolioQueries {
                                      long savingsAccounts, BigDecimal savingsBalance) {
     }
 
+    public record ArrearsBucketRow(String classification, String office, long loans,
+                                   BigDecimal principalOverdue, BigDecimal totalOverdue) {
+    }
+
+    /**
+     * Counts and totals for loans in arrears, grouped by classification and
+     * office — the aggregate form of {@link #arrearsSummary}.
+     * <p>
+     * "How many loans are over 60 days in arrears" answered through the detail
+     * query ships every matching loan into the prompt so the model can count
+     * them. At 63 loans that is thousands of tokens the answer never needed,
+     * and it is the dominant cost of the question. Counting in SQL is what a
+     * database is for.
+     */
+    public List<ArrearsBucketRow> arrearsTotals(int minDaysInArrears, String officeName) {
+        return jdbc.sql("""
+                WITH loan_arrears AS (
+                    SELECT l.id,
+                           o.name AS office,
+                           MIN(s.duedate) AS overdue_since,
+                           SUM(COALESCE(s.principal_amount, 0)
+                               - COALESCE(s.principal_completed_derived, 0)
+                               - COALESCE(s.principal_writtenoff_derived, 0)) AS principal_overdue,
+                           SUM(COALESCE(s.principal_amount, 0)
+                               - COALESCE(s.principal_completed_derived, 0)
+                               - COALESCE(s.principal_writtenoff_derived, 0)
+                               + COALESCE(s.interest_amount, 0)
+                               - COALESCE(s.interest_completed_derived, 0)
+                               - COALESCE(s.interest_writtenoff_derived, 0)
+                               - COALESCE(s.interest_waived_derived, 0)) AS total_overdue
+                    FROM m_loan l
+                    JOIN m_client c ON c.id = l.client_id
+                    JOIN m_office o ON o.id = c.office_id
+                    JOIN m_loan_repayment_schedule s ON s.loan_id = l.id
+                    WHERE l.loan_status_id = 300
+                      AND l.client_id IS NOT NULL
+                      AND s.completed_derived IS FALSE
+                      AND s.duedate < (CAST(:businessDate AS date)
+                                       - COALESCE(l.grace_on_arrears_ageing, 0) * INTERVAL '1 day')
+                      AND (CAST(:office AS text) IS NULL
+                           OR o.name ILIKE '%' || CAST(:office AS text) || '%')
+                    GROUP BY l.id, o.name
+                    HAVING (CAST(:businessDate AS date) - MIN(s.duedate)) >= :minDays
+                )
+                SELECT COALESCE(dr.classification, 'unclassified'), a.office, COUNT(*),
+                       SUM(a.principal_overdue), SUM(a.total_overdue)
+                FROM loan_arrears a
+                LEFT JOIN m_loan_delinquency_tag_history h
+                       ON h.loan_id = a.id AND h.liftedon_date IS NULL
+                LEFT JOIN m_delinquency_range dr ON dr.id = h.delinquency_range_id
+                GROUP BY COALESCE(dr.classification, 'unclassified'), a.office
+                ORDER BY 1, 2
+                """)
+                .param("businessDate", properties.businessDate())
+                .param("office", officeName)
+                .param("minDays", minDaysInArrears)
+                .query((rs, n) -> new ArrearsBucketRow(rs.getString(1), rs.getString(2),
+                        rs.getLong(3), rs.getBigDecimal(4), rs.getBigDecimal(5)))
+                .list();
+    }
+
     /** Loans filtered by status and/or office. Status is an r_loan_status code, not free text. */
     public List<LoanRow> queryLoans(String statusCode, String officeName, Integer limit) {
         return jdbc.sql("""

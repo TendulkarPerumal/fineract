@@ -99,7 +99,10 @@
     </div>
 
     <p class="meta" th:if="${latencyMs}">
-        Answered in <span th:text="${latencyMs}">0</span> ms.
+        <span th:text="${latencyMs}">0</span> ms total &middot;
+        <span th:text="${modelMs}">0</span> ms model &middot;
+        <span th:text="${dbMs}">0</span> ms database &middot;
+        <span th:text="${toolCalls}">0</span> tool call(s)
     </p>
 
     <footer>

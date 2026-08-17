@@ -1,6 +1,7 @@
 package dev.tendulkar.fineractagent.agent;
 
 import dev.tendulkar.fineractagent.config.AgentProperties;
+import dev.tendulkar.fineractagent.observability.CallMetrics;
 import dev.tendulkar.fineractagent.portfolio.PortfolioQueries;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -45,10 +46,12 @@ public class PortfolioTools {
 
     private final PortfolioQueries queries;
     private final AgentProperties properties;
+    private final CallMetrics metrics;
 
-    PortfolioTools(PortfolioQueries queries, AgentProperties properties) {
+    PortfolioTools(PortfolioQueries queries, AgentProperties properties, CallMetrics metrics) {
         this.queries = queries;
         this.properties = properties;
+        this.metrics = metrics;
     }
 
     /**
@@ -129,6 +132,28 @@ public class PortfolioTools {
         });
     }
 
+    @Tool(name = "get_arrears_totals", description = """
+            HOW MANY / TOTALS for loans in arrears, counted in the database and
+            grouped by delinquency classification and office.
+            Use this whenever the question asks how many loans are in arrears, or
+            for overdue totals. Do NOT use get_arrears_summary and count its rows:
+            this returns a handful of grouped rows instead of one row per loan.
+            Only use get_arrears_summary when specific loans must be named.
+            """)
+    public ToolResult getArrearsTotals(
+            @ToolParam(description = "Minimum days in arrears, e.g. 60. Use 1 for any arrears at all") Integer minDaysInArrears,
+            @ToolParam(description = "Office name or part of it", required = false) String office) {
+
+        log.info("tool get_arrears_totals minDays={} office={}", minDaysInArrears, office);
+        return guard("get_arrears_totals", () -> {
+            int minDays = minDaysInArrears == null ? 1 : minDaysInArrears;
+            if (minDays < 0) {
+                throw new IllegalArgumentException("minDaysInArrears must not be negative");
+            }
+            return queries.arrearsTotals(minDays, blankToNull(office));
+        });
+    }
+
     @Tool(name = "get_office_totals", description = """
             Active loan count and outstanding balances per office.
             includeSubOffices=false reports each office on its own. true rolls each
@@ -180,16 +205,25 @@ public class PortfolioTools {
      * a response.
      */
     private ToolResult guard(String tool, Supplier<List<?>> call) {
+        long startedAt = System.nanoTime();
         try {
-            return ToolResult.of(call.get());
+            List<?> rows = call.get();
+            metrics.recordToolCall(tool, millisSince(startedAt), rows.size());
+            return ToolResult.of(rows);
         } catch (IllegalArgumentException e) {
+            metrics.recordToolCall(tool, millisSince(startedAt), 0);
             log.warn("tool {} rejected arguments: {}", tool, e.getMessage());
             return ToolResult.failed(e.getMessage());
         } catch (RuntimeException e) {
+            metrics.recordToolCall(tool, millisSince(startedAt), 0);
             log.error("tool {} failed", tool, e);
             return ToolResult.failed("The query failed to execute. Do not retry it with "
                     + "the same arguments; report that this data could not be retrieved.");
         }
+    }
+
+    private long millisSince(long startNanos) {
+        return (System.nanoTime() - startNanos) / 1_000_000;
     }
 
     /**

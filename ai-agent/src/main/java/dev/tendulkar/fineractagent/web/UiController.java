@@ -2,6 +2,7 @@ package dev.tendulkar.fineractagent.web;
 
 import dev.tendulkar.fineractagent.agent.QueryAgent;
 import dev.tendulkar.fineractagent.config.AgentProperties;
+import dev.tendulkar.fineractagent.observability.CallMetrics;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Controller;
@@ -36,10 +37,12 @@ public class UiController {
 
     private final QueryAgent agent;
     private final AgentProperties properties;
+    private final CallMetrics metrics;
 
-    UiController(QueryAgent agent, AgentProperties properties) {
+    UiController(QueryAgent agent, AgentProperties properties, CallMetrics metrics) {
         this.agent = agent;
         this.properties = properties;
+        this.metrics = metrics;
     }
 
     @GetMapping("/")
@@ -64,6 +67,7 @@ public class UiController {
             return "index";
         }
 
+        metrics.begin();
         long startedAt = System.nanoTime();
         try {
             String answer = agent.answer(question);
@@ -73,7 +77,12 @@ public class UiController {
             model.addAttribute("error",
                     "The agent could not answer that. The error has been logged.");
         }
-        model.addAttribute("latencyMs", (System.nanoTime() - startedAt) / 1_000_000);
+        long elapsedMs = (System.nanoTime() - startedAt) / 1_000_000;
+        CallMetrics.Snapshot snapshot = metrics.end(elapsedMs);
+        model.addAttribute("latencyMs", elapsedMs);
+        model.addAttribute("dbMs", snapshot.dbMillis());
+        model.addAttribute("modelMs", snapshot.modelMillis());
+        model.addAttribute("toolCalls", snapshot.toolCallCount());
         return "index";
     }
 }

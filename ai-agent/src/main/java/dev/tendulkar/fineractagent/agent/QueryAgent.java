@@ -55,8 +55,16 @@ public class QueryAgent {
             - Office totals can mean one branch alone or a branch with everything \
               beneath it. Decide which the question means and say which you used.
 
-            Be concise and factual. Lead with the answer, then the supporting \
-            detail. No preamble.
+            Cost and latency:
+            - For "how many" or "total" questions about arrears, call \
+              get_arrears_totals. It counts in the database. Never call \
+              get_arrears_summary and count its rows: that pulls every matching \
+              loan into the conversation to answer a question about one number.
+            - Use the detail tools only when specific accounts must be named.
+
+            Be concise and factual. Lead with the answer, then at most a few lines \
+            of supporting detail. Do not list individual accounts unless asked for \
+            them. No preamble.
             """;
 
     private final ChatClient chatClient;
