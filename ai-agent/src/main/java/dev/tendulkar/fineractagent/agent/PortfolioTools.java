@@ -12,23 +12,31 @@ import java.math.BigDecimal;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.function.Supplier;
 
 /**
- * The five tools the model may call.
+ * The tools the model may call.
  * <p>
  * Descriptions are written for the model, not for a developer: they say what
- * the tool answers and, where the domain is counter-intuitive, what it does NOT
- * answer. The single most valuable line in this file is the one telling the
- * model that no loan status means "overdue" — without it, a model that has seen
- * other lending schemas will ask for a status that does not exist and read the
- * resulting empty list as "nobody is in arrears".
+ * each tool answers and, where the domain is counter-intuitive, what it does
+ * NOT answer. The most valuable line here is the one saying no loan status
+ * means "overdue" — without it a model that has seen other lending schemas asks
+ * for a status that does not exist and reads the empty result as "nobody is in
+ * arrears".
+ * <p>
+ * Every tool returns a {@link ToolResult} rather than a bare list, and never
+ * throws. A thrown exception is handed back to the model as its raw message,
+ * and the Gemini client then tries to parse that message as JSON — so a SQL
+ * error surfaces as a Jackson parse failure, destroying the request and hiding
+ * the real cause. A structured result keeps failures inside the protocol, where
+ * the model can read them and correct its own call.
  */
 @Component
 public class PortfolioTools {
 
     private static final Logger log = LoggerFactory.getLogger(PortfolioTools.class);
 
-    /** r_loan_status codes. Kept here so a bad argument fails loudly rather than returning zero rows. */
+    /** r_loan_status codes, so a bad argument fails loudly rather than matching zero rows. */
     private static final Set<String> LOAN_STATUS_CODES = Set.of(
             "INVALID", "SUBMITTED_AND_PENDING_APPROVAL", "APPROVED", "ACTIVE",
             "TRANSFER_IN_PROGRESS", "TRANSFER_ON_HOLD", "WITHDRAWN_BY_CLIENT", "REJECTED",
@@ -43,6 +51,22 @@ public class PortfolioTools {
         this.properties = properties;
     }
 
+    /**
+     * @param ok       false means the call failed; rows is then empty.
+     * @param error    what went wrong and, where possible, how to fix the call.
+     * @param rowCount number of rows returned, so the model does not have to count.
+     */
+    public record ToolResult(boolean ok, String error, int rowCount, List<?> rows) {
+
+        static ToolResult of(List<?> rows) {
+            return new ToolResult(true, null, rows.size(), rows);
+        }
+
+        static ToolResult failed(String message) {
+            return new ToolResult(false, message, 0, List.of());
+        }
+    }
+
     @Tool(name = "query_loans", description = """
             List loan accounts, optionally filtered by status and office.
             status must be one of: SUBMITTED_AND_PENDING_APPROVAL, APPROVED, ACTIVE,
@@ -53,14 +77,16 @@ public class PortfolioTools {
             is months late still has status ACTIVE. For anything about lateness use
             get_arrears_summary instead.
             """)
-    public List<PortfolioQueries.LoanRow> queryLoans(
+    public ToolResult queryLoans(
             @ToolParam(description = "Loan status code, or omit for all statuses", required = false) String status,
             @ToolParam(description = "Office name or part of it, e.g. 'Eastern'", required = false) String office,
             @ToolParam(description = "Maximum rows to return", required = false) Integer limit) {
 
-        String normalised = normaliseStatus(status);
-        log.info("tool query_loans status={} office={} limit={}", normalised, office, limit);
-        return queries.queryLoans(normalised, blankToNull(office), limit);
+        log.info("tool query_loans status={} office={} limit={}", status, office, limit);
+        return guard("query_loans", () -> {
+            String normalised = normaliseStatus(status);
+            return queries.queryLoans(normalised, blankToNull(office), limit);
+        });
     }
 
     @Tool(name = "get_loan_schedule", description = """
@@ -68,13 +94,15 @@ public class PortfolioTools {
             instalment with its due date, amounts due, amounts paid, and whether it
             is settled. Use this to explain why a specific loan is behind.
             """)
-    public List<PortfolioQueries.InstalmentRow> getLoanSchedule(
+    public ToolResult getLoanSchedule(
             @ToolParam(description = "Loan account number, e.g. L00000042") String accountNo) {
         log.info("tool get_loan_schedule accountNo={}", accountNo);
-        if (accountNo == null || accountNo.isBlank()) {
-            throw new IllegalArgumentException("accountNo is required");
-        }
-        return queries.loanSchedule(accountNo.trim());
+        return guard("get_loan_schedule", () -> {
+            if (accountNo == null || accountNo.isBlank()) {
+                throw new IllegalArgumentException("accountNo is required, e.g. L00000042");
+            }
+            return queries.loanSchedule(accountNo.trim());
+        });
     }
 
     @Tool(name = "get_arrears_summary", description = """
@@ -86,17 +114,19 @@ public class PortfolioTools {
             never clears instalment 3 has a growing arrears age and a recent payment.
             Only ACTIVE loans can be in arrears.
             """)
-    public List<PortfolioQueries.ArrearsRow> getArrearsSummary(
+    public ToolResult getArrearsSummary(
             @ToolParam(description = "Minimum days in arrears, e.g. 60. Use 1 for any arrears at all") Integer minDaysInArrears,
             @ToolParam(description = "Office name or part of it", required = false) String office,
             @ToolParam(description = "Maximum rows to return", required = false) Integer limit) {
 
-        int minDays = minDaysInArrears == null ? 1 : minDaysInArrears;
-        if (minDays < 0) {
-            throw new IllegalArgumentException("minDaysInArrears must not be negative");
-        }
-        log.info("tool get_arrears_summary minDays={} office={} limit={}", minDays, office, limit);
-        return queries.arrearsSummary(minDays, blankToNull(office), limit);
+        log.info("tool get_arrears_summary minDays={} office={} limit={}", minDaysInArrears, office, limit);
+        return guard("get_arrears_summary", () -> {
+            int minDays = minDaysInArrears == null ? 1 : minDaysInArrears;
+            if (minDays < 0) {
+                throw new IllegalArgumentException("minDaysInArrears must not be negative");
+            }
+            return queries.arrearsSummary(minDays, blankToNull(office), limit);
+        });
     }
 
     @Tool(name = "get_office_totals", description = """
@@ -106,11 +136,11 @@ public class PortfolioTools {
             office includes its branches. These give different numbers and both are
             valid; choose deliberately and say which was used.
             """)
-    public List<PortfolioQueries.OfficeTotalRow> getOfficeTotals(
+    public ToolResult getOfficeTotals(
             @ToolParam(description = "Roll sub-offices into their parent", required = false) Boolean includeSubOffices) {
         boolean rollUp = Boolean.TRUE.equals(includeSubOffices);
         log.info("tool get_office_totals includeSubOffices={}", rollUp);
-        return queries.officeTotals(rollUp);
+        return guard("get_office_totals", () -> queries.officeTotals(rollUp));
     }
 
     @Tool(name = "get_client_portfolio", description = """
@@ -119,7 +149,7 @@ public class PortfolioTools {
             number of active loans, or by minimum savings balance.
             Use minActiveLoans=2 for clients holding more than one active loan.
             """)
-    public List<PortfolioQueries.ClientPortfolioRow> getClientPortfolio(
+    public ToolResult getClientPortfolio(
             @ToolParam(description = "Client name or part of it", required = false) String name,
             @ToolParam(description = "Only clients with at least this many active loans", required = false) Integer minActiveLoans,
             @ToolParam(description = "Only clients with at least this total savings balance", required = false) BigDecimal minSavingsBalance,
@@ -127,7 +157,8 @@ public class PortfolioTools {
 
         log.info("tool get_client_portfolio name={} minLoans={} minBalance={}",
                 name, minActiveLoans, minSavingsBalance);
-        return queries.clientPortfolio(blankToNull(name), minActiveLoans, minSavingsBalance, limit);
+        return guard("get_client_portfolio",
+                () -> queries.clientPortfolio(blankToNull(name), minActiveLoans, minSavingsBalance, limit));
     }
 
     @Tool(name = "get_business_date", description = """
@@ -140,12 +171,33 @@ public class PortfolioTools {
     }
 
     /**
+     * Runs a query and converts any failure into a result the model can read.
+     * <p>
+     * Argument mistakes are returned verbatim, because they usually name the fix
+     * and the model can retry. Anything else is logged with its stack trace and
+     * reported to the model generically: a database error message is an internal
+     * detail, and feeding SQL text back into a prompt is how a schema leaks into
+     * a response.
+     */
+    private ToolResult guard(String tool, Supplier<List<?>> call) {
+        try {
+            return ToolResult.of(call.get());
+        } catch (IllegalArgumentException e) {
+            log.warn("tool {} rejected arguments: {}", tool, e.getMessage());
+            return ToolResult.failed(e.getMessage());
+        } catch (RuntimeException e) {
+            log.error("tool {} failed", tool, e);
+            return ToolResult.failed("The query failed to execute. Do not retry it with "
+                    + "the same arguments; report that this data could not be retrieved.");
+        }
+    }
+
+    /**
      * Rejects an unrecognised status rather than passing it through.
      * <p>
-     * A bogus status would match no rows and return an empty list, which the
-     * model reports as "there are none" — a confidently wrong answer. Failing
-     * here turns that into an error the model can see and correct, which is the
-     * whole point of validating arguments at the tool boundary.
+     * A bogus status matches no rows and returns an empty list, which the model
+     * reports as "there are none" — confidently wrong. Failing turns that into
+     * something the model can see and correct.
      */
     private String normaliseStatus(String status) {
         if (status == null || status.isBlank()) {

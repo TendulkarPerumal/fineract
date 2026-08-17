@@ -80,8 +80,8 @@ public class PortfolioQueries {
                 JOIN r_loan_status rs  ON rs.id = l.loan_status_id
                 JOIN m_product_loan p  ON p.id = l.product_id
                 WHERE l.client_id IS NOT NULL
-                  AND (:status IS NULL OR rs.code = :status)
-                  AND (:office IS NULL OR o.name ILIKE '%' || :office || '%')
+                  AND (CAST(:status AS text) IS NULL OR rs.code = CAST(:status AS text))
+                  AND (CAST(:office AS text) IS NULL OR o.name ILIKE '%' || CAST(:office AS text) || '%')
                 ORDER BY l.total_outstanding_derived DESC
                 LIMIT :limit
                 """)
@@ -129,7 +129,7 @@ public class PortfolioQueries {
         return jdbc.sql("""
                 SELECT l.account_no, c.display_name, o.name, p.name,
                        MIN(s.duedate) AS overdue_since,
-                       (:businessDate::date - MIN(s.duedate)) AS days_in_arrears,
+                       (CAST(:businessDate AS date) - MIN(s.duedate)) AS days_in_arrears,
                        COALESCE(MAX(dr.classification), 'unclassified'),
                        SUM(COALESCE(s.principal_amount, 0)
                            - COALESCE(s.principal_completed_derived, 0)
@@ -152,11 +152,11 @@ public class PortfolioQueries {
                 WHERE l.loan_status_id = 300
                   AND l.client_id IS NOT NULL
                   AND s.completed_derived IS FALSE
-                  AND s.duedate < (:businessDate::date
+                  AND s.duedate < (CAST(:businessDate AS date)
                                    - COALESCE(l.grace_on_arrears_ageing, 0) * INTERVAL '1 day')
-                  AND (:office IS NULL OR o.name ILIKE '%' || :office || '%')
+                  AND (CAST(:office AS text) IS NULL OR o.name ILIKE '%' || CAST(:office AS text) || '%')
                 GROUP BY l.account_no, c.display_name, o.name, p.name
-                HAVING (:businessDate::date - MIN(s.duedate)) >= :minDays
+                HAVING (CAST(:businessDate AS date) - MIN(s.duedate)) >= :minDays
                 ORDER BY days_in_arrears DESC
                 LIMIT :limit
                 """)
@@ -238,7 +238,7 @@ public class PortfolioQueries {
                     WHERE status_enum = 300 AND client_id IS NOT NULL
                     GROUP BY client_id
                 ) sav ON sav.client_id = c.id
-                WHERE (:name IS NULL OR c.display_name ILIKE '%' || :name || '%')
+                WHERE (CAST(:name AS text) IS NULL OR c.display_name ILIKE '%' || CAST(:name AS text) || '%')
                   AND COALESCE(loans.n, 0) >= :minLoans
                   AND COALESCE(sav.balance, 0) >= :minBalance
                 ORDER BY COALESCE(loans.outstanding, 0) DESC
