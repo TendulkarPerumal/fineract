@@ -50,7 +50,14 @@ SELECT
     1, TIMESTAMPTZ '2026-01-01 00:00:00+00', 1, TIMESTAMPTZ '2026-01-01 00:00:00+00'
 FROM (
     SELECT i,
-           CASE WHEN i % 10 < 6 THEN 2 ELSE 3 END AS off_id,
+           -- Office is keyed on i % 7 while arrears is keyed on i % 10 (see the
+           -- unpaid_months rule below). Both were originally i % 10, which made
+           -- them perfectly correlated: every loan in arrears fell in one branch
+           -- and the other branch structurally could not have any. That is not a
+           -- portfolio, it is an artifact, and it makes any question combining
+           -- office and arrears degenerate. 7 and 10 are coprime, so the two
+           -- attributes now vary independently across the 200 clients.
+           CASE WHEN i % 7 < 4 THEN 2 ELSE 3 END AS off_id,
            (ARRAY['Aarti','Bhavna','Chetan','Deepa','Farhan','Gita','Harish',
                   'Ishaan','Jaya','Kiran','Lalita','Manoj','Nisha','Omkar',
                   'Pooja','Rajesh','Sarita','Tarun','Usha','Vijay'])[1 + (i % 20)] AS fn,
