@@ -50,6 +50,16 @@ spring:
           # pass rate into a sampling experiment.
           temperature: 0.0
 
+agent:
+  # Fineract's logical "today". Arrears is measured against this, and the seed
+  # in V3/V4 is built around this exact date, so the two must agree: changing it
+  # without regenerating the seed silently changes every arrears answer.
+  business-date: ${AGENT_BUSINESS_DATE:2026-06-30}
+  # Hard cap on rows any tool may return, whatever the model asks for. One
+  # careless call over 350 loans would otherwise dominate the context window
+  # and the cost of a single question.
+  max-rows: ${AGENT_MAX_ROWS:50}
+
 server:
   port: ${PORT:8080}
 
