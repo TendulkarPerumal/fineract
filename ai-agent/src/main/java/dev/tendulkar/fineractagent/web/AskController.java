@@ -1,12 +1,18 @@
 package dev.tendulkar.fineractagent.web;
 
-import dev.tendulkar.fineractagent.agent.QueryAgent;
+import dev.tendulkar.fineractagent.agent.AgentAnswer;
+import dev.tendulkar.fineractagent.agent.AgentUnavailableException;
+import dev.tendulkar.fineractagent.agent.ResilientQueryAgent;
 import dev.tendulkar.fineractagent.observability.CallMetrics;
+import dev.tendulkar.fineractagent.observability.StatsRegistry;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -20,40 +26,59 @@ import java.util.Map;
 @RequestMapping("/api")
 public class AskController {
 
-    private final QueryAgent agent;
+    private final ResilientQueryAgent agent;
     private final JdbcClient jdbc;
-    private final String model;
     private final CallMetrics metrics;
+    private final StatsRegistry stats;
+    private final String model;
 
-    AskController(QueryAgent agent, JdbcClient jdbc, CallMetrics metrics,
+    AskController(ResilientQueryAgent agent, JdbcClient jdbc, CallMetrics metrics,
+                  StatsRegistry stats,
                   @Value("${spring.ai.google.genai.chat.model:unknown}") String model) {
         this.agent = agent;
         this.jdbc = jdbc;
-        this.model = model;
         this.metrics = metrics;
+        this.stats = stats;
+        this.model = model;
     }
 
     /**
-     * The single endpoint for Stage 2. Latency is returned from the first
-     * request rather than added later: it is the number that decides whether
-     * the Stage 3 agent loop is usable, and it belongs in the response shape
-     * before anything depends on that shape.
+     * Latency and token usage are part of the response shape rather than an
+     * afterthought: they are what tells a caller whether an answer was cheap or
+     * expensive, and adding them later would have been a breaking change.
      */
     @PostMapping("/ask")
     public AskResponse ask(@Valid @RequestBody AskRequest request) {
         metrics.begin();
         long startedAt = System.nanoTime();
-        String answer = agent.answer(request.question());
+        AgentAnswer answer = agent.answer(request.question());
         long elapsedMs = (System.nanoTime() - startedAt) / 1_000_000;
-        CallMetrics.Snapshot snapshot = metrics.end(elapsedMs);
-        return new AskResponse(answer, model, elapsedMs, snapshot.dbMillis(),
-                snapshot.modelMillis(), snapshot.toolCallCount(), snapshot.toolCalls());
+
+        CallMetrics.Snapshot snapshot =
+                metrics.end(elapsedMs, answer.promptTokens(), answer.completionTokens());
+        stats.recordSuccess(snapshot);
+
+        return new AskResponse(answer.text(), model, elapsedMs, snapshot.dbMillis(),
+                snapshot.modelMillis(), snapshot.toolCallCount(), snapshot.promptTokens(),
+                snapshot.completionTokens(), snapshot.toolCalls());
+    }
+
+    /**
+     * Refusals are 503 with a readable reason, not a bare 500. An open circuit,
+     * a spent budget and a timeout are all "not now" rather than "broken", and
+     * the caller can act on the difference.
+     */
+    @ExceptionHandler(AgentUnavailableException.class)
+    public ResponseEntity<Map<String, Object>> unavailable(AgentUnavailableException e) {
+        stats.recordFailure();
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(Map.of("error", e.getMessage()));
     }
 
     /**
      * Proves the datasource and Flyway are wired, separately from the model.
-     * When Stage 3 starts returning wrong numbers, the first question is always
-     * whether the service is even pointed at the seeded database.
+     * When an answer looks wrong the first question is always whether the
+     * service is pointed at the seeded database at all.
      */
     @GetMapping("/health/db")
     public Map<String, Object> dbHealth() {
@@ -78,6 +103,7 @@ public class AskController {
     }
 
     public record AskResponse(String answer, String model, long latencyMs, long dbMs,
-                              long modelMs, int toolCalls, List<CallMetrics.ToolCall> tools) {
+                              long modelMs, int toolCalls, long promptTokens,
+                              long completionTokens, List<CallMetrics.ToolCall> tools) {
     }
 }

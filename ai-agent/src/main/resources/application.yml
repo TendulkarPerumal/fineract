@@ -73,6 +73,24 @@ agent:
   # totals tools; 20 rows is enough to name examples without shipping the book.
   max-rows: ${AGENT_MAX_ROWS:20}
 
+  # Wall-clock budget for one question, tool calls included. Without it a
+  # slow model holds a request thread open indefinitely, which on Cloud Run
+  # means paying for an instance to sit and wait.
+  request-timeout: ${AGENT_REQUEST_TIMEOUT:90s}
+
+  # Hard spend ceiling. This is a free-tier key behind a public URL: without
+  # a cap, one visitor holding down enter exhausts the quota for everyone
+  # and the demo is dead until the quota resets.
+  daily-token-cap: ${AGENT_DAILY_TOKEN_CAP:400000}
+
+  # Circuit breaker. When the provider is down, queueing more calls turns
+  # one outage into thread-pool exhaustion.
+  failure-threshold: ${AGENT_FAILURE_THRESHOLD:4}
+  circuit-open-for: ${AGENT_CIRCUIT_OPEN_FOR:60s}
+
+  # Per-client allowance, applied only to the endpoints that cost money.
+  requests-per-minute: ${AGENT_REQUESTS_PER_MINUTE:6}
+
 server:
   port: ${PORT:8080}
 

@@ -1,6 +1,8 @@
 package dev.tendulkar.fineractagent.agent;
 
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.metadata.Usage;
+import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.stereotype.Service;
 
 /**
@@ -76,10 +78,26 @@ public class QueryAgent {
                 .build();
     }
 
-    public String answer(String question) {
-        return chatClient.prompt()
+    public AgentAnswer answer(String question) {
+        ChatResponse response = chatClient.prompt()
                 .user(question)
                 .call()
-                .content();
+                .chatResponse();
+
+        String text = (response == null || response.getResult() == null)
+                ? "" : response.getResult().getOutput().getText();
+
+        // Usage is read from the response rather than estimated: cost per
+        // question is a number this project reports, so it has to be measured.
+        // A missing usage block reads as zero rather than breaking the answer.
+        long prompt = 0;
+        long completion = 0;
+        if (response != null && response.getMetadata() != null
+                && response.getMetadata().getUsage() != null) {
+            Usage usage = response.getMetadata().getUsage();
+            prompt = usage.getPromptTokens() == null ? 0L : usage.getPromptTokens();
+            completion = usage.getCompletionTokens() == null ? 0L : usage.getCompletionTokens();
+        }
+        return new AgentAnswer(text, prompt, completion);
     }
 }

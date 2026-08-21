@@ -1,8 +1,11 @@
 package dev.tendulkar.fineractagent.web;
 
-import dev.tendulkar.fineractagent.agent.QueryAgent;
+import dev.tendulkar.fineractagent.agent.AgentAnswer;
+import dev.tendulkar.fineractagent.agent.AgentUnavailableException;
+import dev.tendulkar.fineractagent.agent.ResilientQueryAgent;
 import dev.tendulkar.fineractagent.config.AgentProperties;
 import dev.tendulkar.fineractagent.observability.CallMetrics;
+import dev.tendulkar.fineractagent.observability.StatsRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Controller;
@@ -14,19 +17,18 @@ import org.springframework.web.bind.annotation.RequestParam;
 import java.util.List;
 
 /**
- * The demo page. Server-rendered rather than a separate frontend so the whole
- * thing stays one deployable jar.
+ * The demo page. Server-rendered so the whole project stays one deployable jar.
  * <p>
- * Errors are rendered on the page instead of surfacing as a 500, because this
- * is the surface a stranger will judge the project by: an agent that says what
- * went wrong reads as engineering, a browser error page reads as broken.
+ * Failures render on the page rather than as a 500. This is the surface a
+ * stranger judges the project by: an agent that says what went wrong reads as
+ * engineering, a browser error page reads as broken.
  */
 @Controller
 public class UiController {
 
     private static final Logger log = LoggerFactory.getLogger(UiController.class);
 
-    /** Seeded so a first-time visitor does not face an empty box. */
+    /** Seeded so a first-time visitor is not facing an empty box. */
     private static final List<String> EXAMPLES = List.of(
             "How many loans are more than 60 days in arrears?",
             "What is the total outstanding principal by office?",
@@ -35,28 +37,28 @@ public class UiController {
             "Show me the repayment schedule for loan L00000009",
             "Show me loans with status OVERDUE");
 
-    private final QueryAgent agent;
+    private final ResilientQueryAgent agent;
     private final AgentProperties properties;
     private final CallMetrics metrics;
+    private final StatsRegistry stats;
 
-    UiController(QueryAgent agent, AgentProperties properties, CallMetrics metrics) {
+    UiController(ResilientQueryAgent agent, AgentProperties properties,
+                 CallMetrics metrics, StatsRegistry stats) {
         this.agent = agent;
         this.properties = properties;
         this.metrics = metrics;
+        this.stats = stats;
     }
 
     @GetMapping("/")
     public String index(Model model) {
-        model.addAttribute("examples", EXAMPLES);
-        model.addAttribute("businessDate", properties.businessDate());
+        addCommonAttributes(model, null);
         return "index";
     }
 
     @PostMapping("/ask")
     public String ask(@RequestParam(name = "question", required = false) String question, Model model) {
-        model.addAttribute("examples", EXAMPLES);
-        model.addAttribute("businessDate", properties.businessDate());
-        model.addAttribute("question", question);
+        addCommonAttributes(model, question);
 
         if (question == null || question.isBlank()) {
             model.addAttribute("error", "Please enter a question.");
@@ -69,20 +71,41 @@ public class UiController {
 
         metrics.begin();
         long startedAt = System.nanoTime();
+        long promptTokens = 0;
+        long completionTokens = 0;
+        boolean succeeded = false;
         try {
-            String answer = agent.answer(question);
-            model.addAttribute("answer", answer);
+            AgentAnswer answer = agent.answer(question);
+            promptTokens = answer.promptTokens();
+            completionTokens = answer.completionTokens();
+            succeeded = true;
+            model.addAttribute("answer", answer.text());
+        } catch (AgentUnavailableException e) {
+            model.addAttribute("error", e.getMessage());
         } catch (RuntimeException e) {
             log.error("ask failed for question: {}", question, e);
-            model.addAttribute("error",
-                    "The agent could not answer that. The error has been logged.");
+            model.addAttribute("error", "The agent could not answer that. The error has been logged.");
         }
+
         long elapsedMs = (System.nanoTime() - startedAt) / 1_000_000;
-        CallMetrics.Snapshot snapshot = metrics.end(elapsedMs);
+        CallMetrics.Snapshot snapshot = metrics.end(elapsedMs, promptTokens, completionTokens);
+        if (succeeded) {
+            stats.recordSuccess(snapshot);
+        } else {
+            stats.recordFailure();
+        }
+
         model.addAttribute("latencyMs", elapsedMs);
         model.addAttribute("dbMs", snapshot.dbMillis());
         model.addAttribute("modelMs", snapshot.modelMillis());
         model.addAttribute("toolCalls", snapshot.toolCallCount());
+        model.addAttribute("totalTokens", snapshot.totalTokens());
         return "index";
+    }
+
+    private void addCommonAttributes(Model model, String question) {
+        model.addAttribute("examples", EXAMPLES);
+        model.addAttribute("businessDate", properties.businessDate());
+        model.addAttribute("question", question);
     }
 }
