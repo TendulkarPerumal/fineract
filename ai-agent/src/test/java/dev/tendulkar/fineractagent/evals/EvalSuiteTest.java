@@ -1,7 +1,7 @@
 package dev.tendulkar.fineractagent.evals;
 
 import dev.tendulkar.fineractagent.agent.AgentAnswer;
-import dev.tendulkar.fineractagent.agent.ResilientQueryAgent;
+import dev.tendulkar.fineractagent.agent.QueryAgent;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.MethodOrderer;
@@ -55,7 +55,7 @@ class EvalSuiteTest {
         ANSWERED_UNANSWERABLE,
         /** Declined a question it should have answered. */
         REFUSED_ANSWERABLE,
-        /** Threw, timed out, or was refused by the circuit breaker. */
+        /** Threw or timed out. */
         ERROR
     }
 
@@ -65,8 +65,21 @@ class EvalSuiteTest {
 
     private static final List<Result> RESULTS = new ArrayList<>();
 
+    /**
+     * Deliberately QueryAgent, not ResilientQueryAgent.
+     *
+     * The circuit breaker opens after four consecutive failures and then fails
+     * every subsequent call for a minute. Across a 30-question batch that turns
+     * a handful of transient provider errors into a wave of ERROR outcomes and
+     * a pass rate that measures the breaker rather than the agent.
+     *
+     * The breaker is right for a live endpoint and wrong for a batch. What is
+     * under test here is whether answers are correct, so the suite talks to the
+     * agent loop directly. The trade-off is no per-call deadline: a hung call
+     * stalls the suite rather than failing one case.
+     */
     @Autowired
-    private ResilientQueryAgent agent;
+    private QueryAgent agent;
 
     @Autowired
     private JdbcClient jdbc;
