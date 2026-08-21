@@ -1,0 +1,43 @@
+{
+  "name": "fineract-query-agent",
+  "image": "mcr.microsoft.com/devcontainers/java:21",
+
+  "features": {
+    "ghcr.io/devcontainers/features/java:1": {
+      "version": "21",
+      "installMaven": true
+    }
+  },
+
+  // Postgres 18 client. The distro package is 16, and pg_dump refuses to dump a
+  // server newer than itself, which is exactly what Neon is.
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+
+  "remoteEnv": {
+    // Derived from SCRATCH_DB_URL so a new terminal does not need the exports
+    // to be re-typed. Every one of these was a debugging session at some point:
+    // a shell variable that died with its terminal produced a JDBC URL with no
+    // host, which the driver silently resolved to localhost.
+    "AGENT_DB_JDBC_URL": "${localEnv:AGENT_DB_JDBC_URL}",
+    "AGENT_DB_USER": "${localEnv:AGENT_DB_USER}",
+    "AGENT_DB_PASSWORD": "${localEnv:AGENT_DB_PASSWORD}",
+    "GEMINI_API_KEY": "${localEnv:GEMINI_API_KEY}"
+  },
+
+  "forwardPorts": [8080],
+  "portsAttributes": {
+    "8080": {
+      "label": "query agent",
+      "onAutoForward": "notify"
+    }
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "vscjava.vscode-java-pack",
+        "vmware.vscode-boot-dev-pack"
+      ]
+    }
+  }
+}
