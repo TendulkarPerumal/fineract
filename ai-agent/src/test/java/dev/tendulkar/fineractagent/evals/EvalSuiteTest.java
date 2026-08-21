@@ -42,6 +42,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @EnabledIfEnvironmentVariable(named = "GEMINI_API_KEY", matches = ".+")
 class EvalSuiteTest {
 
+    static {
+        // @SpringBootTest never calls main(), so the normalisation applied there
+        // has to be repeated here. A static block runs at class load, before any
+        // JUnit extension callback creates the Spring context.
+        dev.tendulkar.fineractagent.config.DatabaseUrlNormaliser.apply();
+    }
+
     /** Below this, the agent is considered regressed rather than merely imperfect. */
     private static final double PASS_RATE_FLOOR = 0.80;
 
