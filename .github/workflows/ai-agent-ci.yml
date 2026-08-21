@@ -31,8 +31,11 @@ jobs:
           distribution: temurin
           cache: maven
 
-      - name: Build and run tests that need no external services
+      - name: Build and test
         working-directory: ai-agent
+        # ubuntu-latest has Docker, so SchemaAndSeedTest runs here: it applies the
+        # real migrations to a real Postgres and exercises every tool query.
+        # That is the only place the SQL itself is tested.
         run: mvn -B verify
 
       # This is the check that replaces the foreign keys ruled out by
