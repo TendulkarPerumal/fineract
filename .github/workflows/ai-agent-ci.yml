@@ -1,0 +1,66 @@
+# CI for the query agent only.
+#
+# Scoped with a path filter so it does not run on every Fineract change: this
+# is a fork whose upstream has its own extensive build, and re-running that on
+# our commits would bury our signal.
+name: ai-agent CI
+
+on:
+  push:
+    branches: [feature, main]
+    paths:
+      - 'ai-agent/**'
+      - 'scripts/stage1/**'
+      - '.github/workflows/ai-agent-ci.yml'
+  pull_request:
+    paths:
+      - 'ai-agent/**'
+      - '.github/workflows/ai-agent-ci.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: temurin
+          cache: maven
+
+      - name: Build and run tests that need no external services
+        working-directory: ai-agent
+        run: mvn -B verify
+
+      # This is the check that replaces the foreign keys ruled out by
+      # docs/DOMAIN.md decision 5: the r_* tables must still agree with
+      # Fineract's Java enums. It needs no database and no API key, so it is
+      # the one guard that runs on every commit.
+      - name: Reference tables match the Java enums
+        working-directory: ai-agent
+        run: mvn -B -Dtest=ReferenceTableConsistencyTest test
+
+      # State plainly what was NOT verified. A green build here means the code
+      # compiles and the schema-derived checks pass; it does not mean the agent
+      # answers correctly, because the eval suite needs a seeded database and a
+      # live model. A skipped suite must never read as a passing one.
+      - name: Note what this build did not verify
+        run: |
+          echo "::notice title=Evals not run::The 30-question eval suite is skipped in CI."
+          echo "It requires a seeded Postgres and GEMINI_API_KEY."
+          echo "Run locally: cd ai-agent && mvn -Dtest=EvalSuiteTest test"
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      # Build only. Pushing an image needs cloud credentials, and a portfolio
+      # repo should not carry them; deployment is documented in the README as a
+      # manual step.
+      - name: Build the container image
+        working-directory: ai-agent
+        run: docker build -t fineract-query-agent:ci .
