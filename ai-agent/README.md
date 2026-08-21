@@ -118,6 +118,9 @@ agree with a broken agent.
 
 ## Evals
 
+The suite is 33 tests overall; 32 need neither a database nor an API key and
+run on every CI build. The 30 eval questions need both.
+
 30 questions whose expected answers are computed in **plain SQL, written
 independently of the tools**. Reusing the implementation's own query would prove
 only that it is deterministic.

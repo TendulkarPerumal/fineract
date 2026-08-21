@@ -3,11 +3,9 @@
 Everything that broke while building this, what caused it, and what it changed.
 
 Nineteen of them. Kept because the interesting content of a project like this is
-not the code that
-worked first time. Several are traps anyone integrating Spring AI 2.0,
-Spring Boot 4, Liquibase or Neon will hit, and the most instructive share one
-shape:
-**the failure was silent**.
+not the code that worked first time. Several are traps anyone integrating
+Spring AI 2.0, Spring Boot 4, Liquibase or Neon will hit, and the most
+instructive share one shape: **the failure was silent**.
 
 ---
 
