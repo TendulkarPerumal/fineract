@@ -2,9 +2,11 @@
 
 Everything that broke while building this, what caused it, and what it changed.
 
-Kept because the interesting content of a project like this is not the code that
-worked first time. Several of these are traps anyone integrating Spring AI 2.0,
-Spring Boot 4, Liquibase or Neon will hit, and three of them share one shape:
+Nineteen of them. Kept because the interesting content of a project like this is
+not the code that
+worked first time. Several are traps anyone integrating Spring AI 2.0,
+Spring Boot 4, Liquibase or Neon will hit, and the most instructive share one
+shape:
 **the failure was silent**.
 
 ---
@@ -241,3 +243,60 @@ clean clone.
 
 **Fix:** `git update-index --chmod=+x`. The mode belongs in the index, not in
 each machine's shell history.
+
+---
+
+## Testing the thing
+
+### 17. The database URL was the one the provider displays
+
+**Error:** `'url' must start with "jdbc"`, thrown during bean creation, several
+frames inside Hikari.
+
+**Cause:** `AGENT_DB_JDBC_URL` held Neon's connection string,
+`postgresql://user:pass@host/db?sslmode=require`. Spring wants
+`jdbc:postgresql://host/db?...` with credentials as separate properties.
+Pasting the URL your provider shows you is the obvious thing to do.
+
+**Fix:** `DatabaseUrlNormaliser` accepts either shape and converts before the
+context starts. A URL that is neither now fails immediately with a message
+showing both accepted forms.
+
+**Second-order bug, caught by the test rather than by running it:**
+`URI.create("postgresql://")` throws `IllegalArgumentException` *before* the
+host check runs, so the hostless case — the shape an empty environment variable
+produces — would still have surfaced as an opaque parse error. The guard had a
+hole, and only a test asserting the *type* of failure found it.
+
+**Lesson:** the same class of failure appeared three times in this project
+(empty variable, wrong terminal, wrong URL shape). Each time the fix was
+narrower than the cause. Accepting both shapes is the first fix that actually
+closes it.
+
+### 18. The eval suite measured the circuit breaker
+
+**Symptom:** none yet — caught by reading, before it produced a misleading
+number.
+
+**Cause:** the suite called `ResilientQueryAgent`, which opens its circuit after
+four consecutive failures and then fails every call for a minute. Across a
+30-question batch, a handful of transient provider errors would cascade into a
+wave of `ERROR` outcomes, and the reported pass rate would describe the breaker
+rather than the agent.
+
+**Fix:** the suite calls `QueryAgent` directly. The breaker is correct for a
+live endpoint and wrong for a batch.
+
+**Lesson:** production resilience and batch measurement want opposite
+behaviour. Wrapping the thing under test in the protections that guard it in
+production means measuring the protections.
+
+### 19. A validation step that skipped looked like a passing one
+
+Twice. The XML comment check no-opped because Python was not installed, and CI
+would have reported success while never running the evals.
+
+Both are the same shape as failure 1: a check that does not run is worse than no
+check, because it reports success. The CI workflow now prints an explicit notice
+naming what it did not verify, and the eval suite is annotated so a missing API
+key skips it visibly rather than silently.
