@@ -74,12 +74,27 @@ The drift on top of that baseline:
 
 (249 part files − 2 baseline files = 247 = 245 + 2. ✓)
 
-The Flyway→Liquibase switch corresponds to the Fineract 1.6 era — `upgrades/`
-contains `0000_upgrade_to_1.5.xml` and `0000_upgrade_to_1.6.xml`. This clone is
-shallow (988 commits, all rewritten to a single date), so the calendar date of
-that baseline cannot be confirmed from `git log` here; the *structural* claim —
-that 0001 is a stale baseline with ~290 migrations of drift on top — is verified
-above and is the part that matters.
+The switch is dated precisely. `parts/0001_initial_schema.xml` was created by
+commit `45bed0a` on **2022-02-09**, *"FINERACT-1498: Switching from Flyway to
+Liqubase migrations"* — the commit that also deletes the Flyway machinery from
+`TenantDatabaseUpgradeService.java`. It corresponds to the Fineract 1.6 era;
+`upgrades/` still contains `0000_upgrade_to_1.5.xml` and
+`0000_upgrade_to_1.6.xml`.
+
+The file has been touched by exactly **three** commits in its lifetime:
+
+```
+2022-02-09  FINERACT-1498: Switching from Flyway to Liqubase migrations
+2026-01-08  [#FINERACT-2422] standardize use of aging vs. ageing (#5289)
+2026-01-09  Revert "[#FINERACT-2422] standardize use of aging vs. ageing (#5289)"
+```
+
+The second was reverted the next day, so the baseline's content is unchanged
+since February 2022 — over four years of schema evolution living entirely in the
+migrations layered on top of it, and none of it in the file that looks like the
+schema. That is a stronger statement than "stale": the file is not merely out of
+date, it is frozen by design, and anything read from it alone is the schema as it
+stood at the Flyway cutover.
 
 **Concrete example of drift on a table we care about.** `m_loan` is created at
 `parts/0001_initial_schema.xml:1995` with **30** `*_derived` columns. It is then
