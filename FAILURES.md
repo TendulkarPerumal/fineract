@@ -2,7 +2,7 @@
 
 Everything that broke while building this, what caused it, and what it changed.
 
-Nineteen of them. Kept because the interesting content of a project like this is
+Twenty of them. Kept because the interesting content of a project like this is
 not the code that worked first time. Several are traps anyone integrating
 Spring AI 2.0, Spring Boot 4, Liquibase or Neon will hit, and the most
 instructive share one shape: **the failure was silent**.
@@ -298,3 +298,32 @@ Both are the same shape as failure 1: a check that does not run is worse than no
 check, because it reports success. The CI workflow now prints an explicit notice
 naming what it did not verify, and the eval suite is annotated so a missing API
 key skips it visibly rather than silently.
+
+### 20. The output token cap starved the answer
+
+**Symptom:** the eval suite scored **0/32**. Every case returned
+`Failed to generate content`, each after 25–50 seconds.
+
+**Cause:** `max-output-tokens: 800`, added during the latency work. On Gemini
+2.5+/3.x **thinking tokens are charged against the output budget**. Even at
+`thinking-level: LOW`, reasoning consumed the whole 800, leaving nothing for the
+answer, so the response came back with no content parts and
+`finishReason: MAX_TOKENS` — which the client surfaces as "Failed to generate
+content".
+
+The latencies were the tell: the model was working for 25–50 seconds and then
+returning nothing. A rejected request fails fast; a starved one does not.
+
+**Fix:** 4096. The cap is a ceiling against a runaway answer, not a way to
+shorten one — brevity is the prompt's job.
+
+**What made it expensive:** this was self-inflicted, and it was introduced in
+the same commit as three other changes (`thinking-level`, a new aggregate tool,
+a lower row cap) whose combined effect was a large latency improvement. The
+agent had answered correctly before that commit and returned nothing after it,
+and nobody looked until a batch run made it obvious. A single-question smoke
+test after a model-configuration change would have caught it in seconds.
+
+**Lesson:** token caps interact with features that spend tokens invisibly. When
+a provider adds reasoning, every existing budget silently means something
+different.

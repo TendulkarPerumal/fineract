@@ -55,10 +55,14 @@ spring:
           # pick one and report what came back. The first working answer took
           # 187 seconds, most of it here.
           thinking-level: ${GEMINI_THINKING_LEVEL:LOW}
-          # Caps the tail of a long answer. The 187-second response enumerated
-          # account numbers nobody asked for; output tokens are generated
-          # serially, so answer length is latency.
-          max-output-tokens: ${GEMINI_MAX_OUTPUT_TOKENS:800}
+          # Thinking tokens COUNT AGAINST this budget on Gemini 2.5+/3.x.
+          # Set to 800, the LOW-level thinking consumed the whole budget and
+          # every response came back with no content parts and
+          # finishReason MAX_TOKENS, which surfaces as "Failed to generate
+          # content". The eval suite scored 0/32 with 25-50s spent per call
+          # thinking and nothing returned. This is a ceiling to stop a runaway
+          # answer, not a way to shorten one - brevity is the prompt's job.
+          max-output-tokens: ${GEMINI_MAX_OUTPUT_TOKENS:4096}
 
 agent:
   # Fineract's logical "today". Arrears is measured against this, and the seed
